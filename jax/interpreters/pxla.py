@@ -377,11 +377,14 @@ def _shard_sharded_device_array(x, devices, assignments):
     return (xla.device_put(x[assignments[r]], devices[r]) for r in range(n))
 shard_arg_handlers[ShardedDeviceArray] = _shard_sharded_device_array
 
+def _sharded_device_array_constant_handler(c, val, canonicalize_types=True):
+  return c.Constant(onp.asarray(val), canonicalize_types=canonicalize_types)
+xb.register_constant_handler(ShardedDeviceArray, _sharded_device_array_constant_handler)
+
 core.pytype_aval_mappings[ShardedDeviceArray] = ConcreteArray
 xla.device_put_handlers[ShardedDeviceArray] = xla._device_put_array
 xla.pytype_aval_mappings[ShardedDeviceArray] = lambda x: x.aval
 xla.canonicalize_dtype_handlers[ShardedDeviceArray] = identity
-xb.register_constant_handler(ShardedDeviceArray, xla._device_array_constant_handler)
 
 
 class ChunkedDeviceArray(ShardedDeviceArray):
@@ -414,9 +417,9 @@ def xla_pmap_impl(fun, *args, **params):
   backend = params.pop('backend', None)
   assert not params
 
-  abstract_args = map(xla.abstractify, args)
+  avals = [xla.abstractify(x) for x in args]
   compiled_fun = parallel_callable(fun, backend, axis_name, axis_size, devices,
-                                   *abstract_args)
+                                   *avals)
   return compiled_fun(*args)
 
 @lu.cache
@@ -449,8 +452,8 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
     with extend_dynamic_axis_env(axis_name, dummy.trace, global_axis_size):
       return fun.call_wrapped(*args)
 
-  avals = tuple(map(partial(shard_aval, axis_size), avals))
-  pvals = [PartialVal((aval, core.unit)) for aval in avals]
+  sharded_avals = [shard_aval(axis_size, aval) for aval in avals]
+  pvals = [PartialVal((aval, core.unit)) for aval in sharded_avals]
   pval = PartialVal([core.abstract_unit, core.unit])  # dummy value for axis env
   with core.new_master(JaxprTrace, True) as master:
     jaxpr, (out_pvals, consts, env) = \
@@ -478,7 +481,7 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
 
   c = xb.make_computation_builder("pmap_{}".format(fun.__name__))
   xla_consts = _map(c.Constant, consts)
-  xla_args = xla._xla_callable_args(c, avals, tuple_args)
+  xla_args = _pmap_callable_args(c, sharded_avals, tuple_args)
   out_nodes = xla.jaxpr_subcomp(c, jaxpr, backend, axis_env, xla_consts, (), *xla_args)
   built = c.Build(c.Tuple(*out_nodes))
 
@@ -516,6 +519,10 @@ def parallel_callable(fun, backend, axis_name, axis_size, devices, *avals):
 
 class ResultToPopulate(object): pass
 result_to_populate = ResultToPopulate()
+
+def _pmap_callable_args(c, avals, tuple_args):
+  # TODO(mattjj): support laziness for broadcasted axes to map
+  return xla._xla_callable_args(c, avals, tuple_args)
 
 def _pvals_to_results_handler(size, nrep, out_pvals):
   nouts = len(out_pvals)

@@ -219,3 +219,10 @@ def get_module_functions(module):
         attr, (types.BuiltinFunctionType, types.FunctionType, onp.ufunc)):
       module_fns.add(attr)
   return module_fns
+
+def subvals(lst, replace):
+  """Substitute new values in a list based on (index, newval) pairs."""
+  lst = list(lst)
+  for i, v in replace:
+    lst[i] = v
+  return tuple(lst)
