@@ -99,10 +99,10 @@ def identity(x): return x
 
 LazyExpr = namedtuple('LazyExpr', ['input', 'shape', 'dims'])
 LazyArrayVar = namedtuple('ArrayVar', [])
-LazyIota = namedtuple('Iota', ['dtype', 'size'])
-LazyEye = namedtuple('Eye', ['dtype', 'shape', 'offset'])
-LazyTri = namedtuple('Tri', ['dtype', 'shape', 'offset'])
-LazyDelta = namedtuple('Delta', ['dtype', 'shape'])
+LazyIota = namedtuple('Iota', ['dtype', 'size'])           # like np.arange(N)
+LazyEye = namedtuple('Eye', ['dtype', 'shape', 'offset'])  # like np.eye
+LazyTri = namedtuple('Tri', ['dtype', 'shape', 'offset'])  # like np.tri
+LazyDelta = namedtuple('Delta', ['dtype', 'shape'])  # kronecker delta arrays
 
 def lazy_array(shape):
   return LazyExpr(LazyArrayVar(), shape, tuple(range(len(shape))))
@@ -133,6 +133,15 @@ def lazy_transpose(lazy_expr, perm):
   return LazyExpr(lazy_expr.input, new_shape, new_dims)
 
 def eval_lazy_expr(lazy_expr, x):
+  """Evaluate a lazy expression using NumPy.
+
+  Args:
+    lazy_expr: the LazyExpr to evaluate.
+    x: ndarray or None, representing the value of ArrayVar if present.
+
+  Returns:
+    An ndarray representing the value of the lazy expression.
+  """
   input_, shape, dims = lazy_expr
 
   # first create a starting ndarray from input_
@@ -170,6 +179,16 @@ def eval_lazy_expr(lazy_expr, x):
   return x
 
 def stage_lazy_expr(c, lazy_expr, x):
+  """Stage a lazy expression into an XLA computation.
+
+  Args:
+    c: XLA ComputationBuilder into which to stage the expression.
+    lazy_expr: a LazyExpr to evaluate (or None for the identity expression).
+    x: XlaOp or None, representing the value of ArrayVar if present.
+
+  Returns:
+    An XlaOp representing the value of the lazy expression.
+  """
   if lazy_expr is None:
     return x
 
